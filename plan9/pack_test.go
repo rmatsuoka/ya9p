@@ -1,4 +1,4 @@
-package ya9p
+package plan9
 
 import (
 	"testing"

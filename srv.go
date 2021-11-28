@@ -7,11 +7,14 @@ import (
 	"io/fs"
 	"log"
 	"net"
+
+	"github.com/rmatsuoka/ya9p/plan9"
 )
 
 var (
 	errUsedFid = errors.New("used fid")
 	errBadFid  = errors.New("bad fid")
+	errBadFcall  = errors.New("bad fcall")
 )
 
 type fid struct {
@@ -19,9 +22,6 @@ type fid struct {
 	file  fs.File
 	omode int
 	info  fs.FileInfo
-	dirErr error
-	dirOffset int
-	dirEntries []fs.DirEntry
 }
 
 type srv struct {
@@ -65,11 +65,11 @@ func realpath(pwd, relpath string) string {
 	panic("not implement")
 }
 
-func (s *srv) walk(rx *Fcall, tx *Fcall) {
+func (s *srv) walk(rx *plan9.Fcall, tx *plan9.Fcall) {
 	var tag, nwname uint16
 	var fi, newfi uint32
 	var b []byte
-	_, err := unpack(tx.Args, &tag, &fi, &newfi, &nwname, &b)
+	_, err := plan9.Unpack(tx.Args, &tag, &fi, &newfi, &nwname, &b)
 	if err != nil {
 		s.logger.Println(errBadFcall)
 		rx.SetErr(errBadFcall)
@@ -90,7 +90,7 @@ func (s *srv) walk(rx *Fcall, tx *Fcall) {
 	n := 0
 	for ; nwqid < nwname; nwqid++ {
 		var wname string
-		n, err = unpack(b[n:], &wname)
+		n, err = plan9.Unpack(b[n:], &wname)
 		if err != nil {
 			s.logger.Println(errBadFcall)
 			rx.SetErr(errBadFcall)
@@ -103,7 +103,7 @@ func (s *srv) walk(rx *Fcall, tx *Fcall) {
 			s.logger.Printf("srv walk: %v", err)
 			break
 		}
-		qbytes = append(qbytes, infoToQid(info).Bytes()...)
+		qbytes = append(qbytes, plan9.FileInfoToQid(info).Bytes()...)
 	}
 
 	if nwqid == nwname {
@@ -119,14 +119,14 @@ func (s *srv) walk(rx *Fcall, tx *Fcall) {
 		}
 	}
 
-	rx.Args = mustPack(nwqid, qbytes)
+	rx.Args = plan9.MustPack(nwqid, qbytes)
 }
 
-func (s *srv) open(rx *Fcall, tx *Fcall) {
+func (s *srv) open(rx *plan9.Fcall, tx *plan9.Fcall) {
 	var tag uint16
 	var fi uint32
 	var omode uint8
-	_, err := unpack(tx.Args, &tag, &fi, &omode)
+	_, err := plan9.Unpack(tx.Args, &tag, &fi, &omode)
 	if err != nil {
 		s.logger.Println(errBadFcall)
 		rx.SetErr(errBadFcall)
@@ -145,23 +145,8 @@ func (s *srv) open(rx *Fcall, tx *Fcall) {
 		return
 	}
 
-	var o int
-	switch omode & 3 {
-	case OREAD:
-		o = O_RDONLY
-	case ORDWR:
-		o = O_RDWR
-	case OWRITE:
-		o = O_WRONLY
-	case OEXEC:
-		o = O_RDONLY
-	}
-	if (omode & OTRUNC) != 0 {
-		o |= O_TRUNC
-	}
-
 	var file fs.File
-	file, err = openFile(s.fsys, f.path, o, 0)
+	file, err = plan9.Open9(s.fsys, f.path, int(omode))
 	if err != nil {
 		s.logger.Print(err)
 		rx.SetErr(err)
@@ -170,7 +155,7 @@ func (s *srv) open(rx *Fcall, tx *Fcall) {
 
 	info, statErr := file.Stat()
 	if statErr != nil {
-		err := fmt.Errorf("srv open: %v", statErr)
+		err := fmt.Errorf("stat in open message: %v", statErr)
 		s.logger.Print(err)
 		rx.SetErr(err)
 		return
@@ -183,14 +168,14 @@ func (s *srv) open(rx *Fcall, tx *Fcall) {
 	f.file = file
 	f.info = info
 
-	rx.Args = mustPack(infoToQid(info).Bytes(), 0)
+	rx.Args = plan9.MustPack(plan9.FileInfoToQid(info).Bytes(), 0)
 }
 
-func (s *srv) create(rx *Fcall, tx *Fcall) {
+func (s *srv) create(rx *plan9.Fcall, tx *plan9.Fcall) {
 	var fi, perm uint32
 	var name string
 	var mode uint8
-	_, err := unpack(tx.Args, &fi, &name, &perm, &mode)
+	_, err := plan9.Unpack(tx.Args, &fi, &name, &perm, &mode)
 	if err != nil {
 		s.logger.Println(errBadFcall)
 		rx.SetErr(errBadFcall)
@@ -209,14 +194,15 @@ func (s *srv) create(rx *Fcall, tx *Fcall) {
 		rx.SetErr(errBadFid)
 		return
 	}
+
 }
 
 /*
 
-func (s *srv) read(rx *Fcall, tx *Fcall) {
+func (s *srv) read(rx *plan9.Fcall, tx *plan9.Fcall) {
 	var fid, count uint32
 	var offset uint64
-	_, err := unpack(tx.Args, &fid, &offset, &count)
+	_, err := plan9.Unpack(tx.Args, &fid, &offset, &count)
 	if err != nil {
 		s.logger.Println(errBadFcall)
 		rx.SetErr(errBadFcall)
@@ -260,11 +246,11 @@ func (s *srv) read(rx *Fcall, tx *Fcall) {
 	rx.Args = pack(uint32(rc), p)
 }
 
-func (s *srv) write(rx *Fcall, tx *Fcall) {
+func (s *srv) write(rx *plan9.Fcall, tx *plan9.Fcall) {
 	var fid, count uint32
 	var offset uint64
 	var p []byte
-	_, err := unpack(tx.Args, &fid, &offset, &count, &p)
+	_, err := plan9.Unpack(tx.Args, &fid, &offset, &count, &p)
 	if err != nil {
 		s.logger.Println(errBadFcall)
 		rx.SetErr(errBadFcall)
@@ -305,7 +291,7 @@ func (s *srv) write(rx *Fcall, tx *Fcall) {
 	rx.Args = pack(uint32(c))
 }
 
-func (s *srv) clunk(rx *Fcall, tx *Fcall) {
+func (s *srv) clunk(rx *plan9.Fcall, tx *plan9.Fcall) {
 
 }
 */

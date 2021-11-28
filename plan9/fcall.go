@@ -1,4 +1,4 @@
-package ya9p
+package plan9
 
 import (
 	"errors"
@@ -51,16 +51,13 @@ func UnmarshalFcall(m []byte) (*Fcall, error) {
 		return nil, errBadFcall
 	}
 	f := new(Fcall)
-	unpack(m[4:], &f.Type, &f.Tag)
+	Unpack(m[4:], &f.Type, &f.Tag)
 	f.Args = m[7:]
 	return f, nil
 }
 
 func (f *Fcall) Bytes() []byte {
-	size := 4 + 1 + 2 + len(f.Args)
-	m := make([]byte, size)
-	mustPack(m, uint32(size), f.Type, f.Tag, f.Args)
-	return m
+	return MustPack(uint32(4 + 1 + 2 + len(f.Args)), f.Type, f.Tag, f.Args)
 }
 
 func (f *Fcall) SetErr(e error) {
@@ -71,7 +68,7 @@ func (f *Fcall) SetErr(e error) {
 		l = (1 << 16) - 1
 		s = s[:1<<16]
 	}
-	f.Args = mustPack(s)
+	f.Args = MustPack(s)
 }
 
 func ReadFcall(r io.Reader) (*Fcall, error) {

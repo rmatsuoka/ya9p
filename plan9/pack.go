@@ -1,4 +1,4 @@
-package ya9p
+package plan9
 
 import (
 	"errors"
@@ -10,7 +10,7 @@ var (
 	errInvalidType   = errors.New("invalid type")
 )
 
-func pack(elems ...interface{}) ([]byte, error) {
+func Pack(elems ...interface{}) ([]byte, error) {
 	p := make([]byte, 0, 128)
 	o := 0
 	for _, e := range elems {
@@ -67,15 +67,15 @@ func pack(elems ...interface{}) ([]byte, error) {
 	return p, nil
 }
 
-func mustPack(e ...interface{}) []byte {
-	p, err := pack(e...)
+func MustPack(e ...interface{}) []byte {
+	p, err := Pack(e...)
 	if err != nil {
 		panic(err)
 	}
 	return p
 }
 
-func unpack(p []byte, elem ...interface{}) (o int, err error) {
+func Unpack(p []byte, elem ...interface{}) (o int, err error) {
 	defer func() {
 		if p := recover(); p != nil {
 			err = fmt.Errorf("%v", p)
