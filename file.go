@@ -7,7 +7,7 @@ import (
 	"9fans.net/go/plan9/client"
 )
 
-type CFS struct{
+type CFS struct {
 	fsys *client.Fsys
 }
 
@@ -27,11 +27,11 @@ func (fsys *CFS) OpenFile(name string, flag int, perm fs.FileMode) (fs.File, err
 	return nil, nil
 }
 
-func (fsys *CFS) Open9(name string, mode uint8) (File, error) {
+func (fsys *CFS) Open9(name string, mode uint8) (fs.File, error) {
 	return nil, nil
 }
 
-func (fsys *CFS) Create9(name string, mode uint8, perm plan9.Perm) (File, error) {
+func (fsys *CFS) Create9(name string, mode uint8, perm plan9.Perm) (fs.File, error) {
 	return nil, nil
 }
 
