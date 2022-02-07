@@ -168,6 +168,7 @@ func (f *fidFS) ReadAt(p []byte, off int64) (int, error) {
 		for i := f.readDirOffset; i < len(f.dirEntries); i++ {
 			info, err := f.dirEntries[i].Info()
 			if err != nil {
+				f.readDirOffset++
 				continue
 			}
 			b, _ := FileInfoToDir(info).Bytes()
