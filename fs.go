@@ -63,6 +63,10 @@ func (f *fidFS) Walk(names []string) (Fid, []Qid, error) {
 		return nil, nil, ErrBadUseFid
 	}
 
+	if len(names) == 0 {
+		return newFidFS(f.fsys, f.path), []Qid{}, nil
+	}
+
 	info, err := fs.Stat(f.fsys, f.path)
 	if err != nil {
 		return nil, nil, err
@@ -70,10 +74,6 @@ func (f *fidFS) Walk(names []string) (Fid, []Qid, error) {
 
 	if !info.IsDir() {
 		return nil, nil, ErrWalkNoDir
-	}
-
-	if len(names) == 0 {
-		return newFidFS(f.fsys, f.path), []Qid{}, nil
 	}
 
 	var qids []Qid
