@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"math/rand"
 	pathpkg "path"
+	"strings"
 
 	"9fans.net/go/plan9"
 )
@@ -49,6 +50,14 @@ func newFidFS(fsys fs.FS, path string) *fidFS {
 	return &fidFS{omode: -1, fsys: fsys, path: path}
 }
 
+func cleanPath(p string) string {
+	s := pathpkg.Clean(p)
+	if strings.HasPrefix(s, "../") {
+		return "."
+	}
+	return s
+}
+
 func (f *fidFS) Walk(names []string) (Fid, []Qid, error) {
 	if f.omode != -1 {
 		return nil, nil, ErrBadUseFid
@@ -70,7 +79,7 @@ func (f *fidFS) Walk(names []string) (Fid, []Qid, error) {
 	var qids []Qid
 	path := f.path
 	for _, name := range names {
-		path = pathpkg.Clean(path + "/" + name)
+		path = cleanPath(path + "/" + name)
 		info, err = fs.Stat(f.fsys, path)
 		if err != nil {
 			break
