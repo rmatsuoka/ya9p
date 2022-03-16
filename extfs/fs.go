@@ -3,6 +3,7 @@ package extfs
 import (
 	"errors"
 	"io/fs"
+	"os"
 	"time"
 )
 
@@ -49,9 +50,9 @@ type FileInfo interface {
 func OpenFile(fsys fs.FS, name string, flag int, perm fs.FileMode) (fs.File, error) {
 	if fsys, ok := fsys.(OpenFileFS); ok {
 		return fsys.OpenFile(name, flag, perm)
-	} else if fsys, ok := fsys.(CreateFS); ok && flag == O_RDWR|O_CREATE|O_TRUNC {
+	} else if fsys, ok := fsys.(CreateFS); ok && flag == os.O_RDWR|os.O_CREATE|os.O_TRUNC {
 		return fsys.Create(name)
-	} else if flag == O_RDONLY {
+	} else if flag == os.O_RDONLY {
 		return fsys.Open(name)
 	}
 	return nil, errors.New("not implemented OpenFile")

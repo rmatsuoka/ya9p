@@ -126,7 +126,7 @@ func (f *fidFS) Open(mode uint8) (Qid, uint32, error) {
 		o |= os.O_TRUNC
 	}
 
-	file, err := extfs.OpenFile(f.fsys, f.path, 0)
+	file, err := extfs.OpenFile(f.fsys, f.path, o, 0)
 	if err != nil {
 		return Qid{}, 0, err
 	}
