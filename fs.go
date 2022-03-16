@@ -5,10 +5,12 @@ import (
 	"io"
 	"io/fs"
 	"math/rand"
+	"os"
 	pathpkg "path"
 	"strings"
 
 	"9fans.net/go/plan9"
+	"github.com/rmatsuoka/ya9p/extfs"
 )
 
 type srvFS struct {
@@ -24,6 +26,7 @@ type fidFS struct {
 	dirEntries    []fs.DirEntry
 	readDirOffset int
 	readOffset    int64
+	writeOffset   int64
 }
 
 func ServeFS(rw io.ReadWriter, fsys fs.FS) {
@@ -96,31 +99,34 @@ func (f *fidFS) Walk(names []string) (Fid, []Qid, error) {
 }
 
 func (f *fidFS) Open(mode uint8) (Qid, uint32, error) {
-	var err error
 	if f.omode != -1 {
 		return Qid{}, 0, ErrBadUseFid
 	}
 
 	// no support ORCLOSE
 	if mode&plan9.ORCLOSE != 0 {
-		err = ErrPerm
+		return Qid{}, 0, ErrPerm
 	}
 
-	// currently, open only
-	if mode&3 != plan9.OREAD {
-		err = ErrPerm
+	var o int
+	switch mode & 3 {
+	case plan9.OREAD:
+		o = os.O_RDONLY
+	case plan9.OWRITE:
+		o = os.O_WRONLY
+	case plan9.ORDWR:
+		o = os.O_RDWR
+	case plan9.OEXEC:
+		o = os.O_RDONLY
+	default:
+		return Qid{}, 0, ErrPerm
 	}
 
-	// no support OTRUNC
 	if mode&plan9.OTRUNC != 0 {
-		err = ErrPerm
+		o |= os.O_TRUNC
 	}
 
-	if err != nil {
-		return Qid{}, 0, err
-	}
-
-	file, err := f.fsys.Open(f.path)
+	file, err := extfs.OpenFile(f.fsys, f.path, 0)
 	if err != nil {
 		return Qid{}, 0, err
 	}
@@ -187,7 +193,29 @@ func (f *fidFS) ReadAt(p []byte, off int64) (int, error) {
 }
 
 func (f *fidFS) WriteAt(p []byte, off int64) (int, error) {
-	return 0, ErrNoWrite
+	if f.omode == -1 {
+		return 0, ErrBadUseFid
+	}
+	if f.isDir {
+		return 0, ErrNoWrite
+	}
+
+	if w, ok := f.file.(io.WriterAt); ok {
+		return w.WriteAt(p, off)
+	}
+
+	w, ok := f.file.(io.Writer)
+	if !ok {
+		return 0, ErrNoWrite
+	}
+
+	if off != f.writeOffset {
+		return 0, ErrBadOffset
+	}
+	n, err := w.Write(p)
+	f.writeOffset += int64(n)
+
+	return n, err
 }
 
 func (f *fidFS) Close() error {
