@@ -207,7 +207,7 @@ func (c *conn) read(rx *Fcall) *Fcall {
 	}
 	b := make([]byte, int(rx.Count))
 	n, err := f.ReadAt(b, int64(rx.Offset))
-	if err != io.EOF && err != nil {
+	if n == 0 && err != nil && err != io.EOF {
 		return errFcall(err)
 	}
 	return &Fcall{Type: plan9.Rread, Data: b[:n]}

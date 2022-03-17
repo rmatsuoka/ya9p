@@ -245,7 +245,7 @@ func (f *fidFS) Stat() (*Dir, error) {
 }
 
 func (f *fidFS) WStat(*Dir) error {
-	return ErrNoWstat
+	return nil
 }
 
 func FileInfoToQid(info fs.FileInfo) Qid {
