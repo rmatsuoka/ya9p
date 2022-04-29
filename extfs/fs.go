@@ -50,9 +50,11 @@ type FileInfo interface {
 func OpenFile(fsys fs.FS, name string, flag int, perm fs.FileMode) (fs.File, error) {
 	if fsys, ok := fsys.(OpenFileFS); ok {
 		return fsys.OpenFile(name, flag, perm)
-	} else if fsys, ok := fsys.(CreateFS); ok && flag == os.O_RDWR|os.O_CREATE|os.O_TRUNC {
+	}
+	if fsys, ok := fsys.(CreateFS); ok && flag == os.O_RDWR|os.O_CREATE|os.O_TRUNC {
 		return fsys.Create(name)
-	} else if flag == os.O_RDONLY {
+	}
+	if flag == os.O_RDONLY {
 		return fsys.Open(name)
 	}
 	return nil, errors.New("not implemented OpenFile")
