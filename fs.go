@@ -41,20 +41,12 @@ func FSFid(fsys fs.FS, name string) (Fid, Qid, error) {
 	return newFidFS(fsys, name), FileInfoToQid(info), nil
 }
 
-func ServeFS(rw io.ReadWriter, fsys fs.FS) {
-	Serve(rw, &srvFS{fsys})
-}
-
 func (s *srvFS) Auth(user, aname string) (Fid, Qid, error) {
 	return nil, Qid{}, NoAuthRequired
 }
 
 func (s *srvFS) Attach(afid Fid, user, aname string) (Fid, Qid, error) {
 	return FSFid(s.fsys, ".")
-}
-
-func (s *srvFS) End() error {
-	return nil
 }
 
 func newFidFS(fsys fs.FS, path string) *fidFS {
@@ -302,9 +294,8 @@ func Plan9FileMode(m fs.FileMode) Perm {
 	var p Perm
 	for _, fm := range fileModes {
 		if m&fm.unix != 0 {
-			p |= fm.p9
+			p |= fm.plan9
 		}
 	}
-	p |= Perm(m.Perm())
-	return p
+	return p | Perm(m.Perm())
 }
