@@ -1,9 +1,9 @@
 package main
 
 import (
-	"os"
-	"net"
 	"log"
+	"net"
+	"os"
 
 	"github.com/rmatsuoka/ya9p"
 )
@@ -18,6 +18,6 @@ func main() {
 		if err != nil {
 			log.Print(err)
 		}
-		go ya9p.ServeFS(conn, os.DirFS("/"))
+		go ya9p.Serve(conn, ya9p.FS(os.DirFS("/")))
 	}
 }
