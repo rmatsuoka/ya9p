@@ -44,7 +44,7 @@ type Fid interface {
 	Create(name string, mode uint8, perm Perm) (Qid, uint32, error)
 	io.ReaderAt
 	io.WriterAt
-	io.Closer
+	Clunk() error
 	Remove() error
 	Stat() (*Dir, error)
 	WStat(*Dir) error
@@ -53,7 +53,7 @@ type Fid interface {
 type Srv interface {
 	Auth(user, aname string) (Fid, Qid, error)
 	Attach(afid Fid, user, aname string) (Fid, Qid, error)
-	End(afid Fid) error
+	End() error
 }
 
 type conn struct {
@@ -114,7 +114,7 @@ func (c *conn) serve() {
 			return
 		}
 	}
-	c.s.End(c.afid)
+	c.s.End()
 }
 
 func errFcall(e error) *Fcall {
@@ -231,7 +231,7 @@ func (c *conn) clunk(rx *Fcall) *Fcall {
 		return errFcall(errUnknownFid)
 	}
 	delete(c.fids, rx.Fid)
-	err := f.Close()
+	err := f.Clunk()
 	if err != nil {
 		return errFcall(err)
 	}

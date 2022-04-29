@@ -29,6 +29,18 @@ type fidFS struct {
 	writeOffset   int64
 }
 
+func FS(fsys fs.FS) Srv {
+	return &srvFS{fsys}
+}
+
+func FSFid(fsys fs.FS, name string) (Fid, Qid, error) {
+	info, err := fs.Stat(fsys, name)
+	if err != nil {
+		return nil, Qid{}, err
+	}
+	return newFidFS(fsys, name), FileInfoToQid(info), nil
+}
+
 func ServeFS(rw io.ReadWriter, fsys fs.FS) {
 	Serve(rw, &srvFS{fsys})
 }
@@ -38,14 +50,10 @@ func (s *srvFS) Auth(user, aname string) (Fid, Qid, error) {
 }
 
 func (s *srvFS) Attach(afid Fid, user, aname string) (Fid, Qid, error) {
-	info, err := fs.Stat(s.fsys, ".")
-	if err != nil {
-		return nil, Qid{}, err
-	}
-	return newFidFS(s.fsys, "."), FileInfoToQid(info), nil
+	return FSFid(s.fsys, ".")
 }
 
-func (s *srvFS) End(afid Fid) error {
+func (s *srvFS) End() error {
 	return nil
 }
 
@@ -218,7 +226,7 @@ func (f *fidFS) WriteAt(p []byte, off int64) (int, error) {
 	return n, err
 }
 
-func (f *fidFS) Close() error {
+func (f *fidFS) Clunk() error {
 	if f.omode == -1 {
 		return nil
 	}
@@ -274,9 +282,9 @@ func FileInfoToDir(info fs.FileInfo) *Dir {
 	}
 }
 
-var go9modes = []struct {
-	fm fs.FileMode
-	p9 Perm
+var fileModes = []struct {
+	unix  fs.FileMode
+	plan9 Perm
 }{
 	{fs.ModeDir, plan9.DMDIR},
 	{fs.ModeAppend, plan9.DMAPPEND},
@@ -292,9 +300,9 @@ var go9modes = []struct {
 
 func Plan9FileMode(m fs.FileMode) Perm {
 	var p Perm
-	for _, g9 := range go9modes {
-		if m&g9.fm != 0 {
-			p |= g9.p9
+	for _, fm := range fileModes {
+		if m&fm.unix != 0 {
+			p |= fm.p9
 		}
 	}
 	p |= Perm(m.Perm())
