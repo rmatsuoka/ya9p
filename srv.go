@@ -2,9 +2,9 @@ package ya9p
 
 import (
 	"errors"
-	"fmt"
 	"io"
-	"os"
+	"log"
+	"sync"
 
 	"9fans.net/go/plan9"
 )
@@ -53,229 +53,286 @@ type Fid interface {
 type Srv interface {
 	Auth(user, aname string) (Fid, Qid, error)
 	Attach(afid Fid, user, aname string) (Fid, Qid, error)
-	End() error
 }
 
 type conn struct {
-	s      Srv
-	afid   Fid
-	fids   map[uint32]Fid
-	rw     io.ReadWriter
-	logger io.Writer
+	rwc    io.ReadWriteCloser
+	logger *log.Logger
+	s      *serveSrv
 }
 
-func Serve(rw io.ReadWriter, s Srv) {
-	c := &conn{s: s, fids: make(map[uint32]Fid), rw: rw, logger: os.Stderr}
-	c.serve()
+func Serve(rwc io.ReadWriteCloser, s Srv) error {
+	c := &conn{s: &serveSrv{s: s}, rwc: rwc, logger: log.Default()}
+	return c.serve()
 }
 
-func (c *conn) serve() {
+func (c *conn) serve() error {
+	w := make(chan *Fcall)
+	var wg sync.WaitGroup
+
+	go func() {
+		for rx := range w {
+			plan9.WriteFcall(c.rwc, rx) // ignore error
+		}
+	}()
+
 	for {
-		rx, err := plan9.ReadFcall(c.rw)
+		tx, err := plan9.ReadFcall(c.rwc)
 		if err != nil {
-			fmt.Fprintln(c.logger, err)
-			return
+			break
 		}
-
-		var tx *Fcall
-		switch rx.Type {
-		case plan9.Tversion:
-			tx = c.version(rx)
-		case plan9.Tauth:
-			tx = c.auth(rx)
-		case plan9.Tattach:
-			tx = c.attach(rx)
-		case plan9.Twalk:
-			tx = c.walk(rx)
-		case plan9.Tclunk:
-			tx = c.clunk(rx)
-		case plan9.Topen:
-			tx = c.open(rx)
-		case plan9.Tcreate:
-			tx = c.create(rx)
-		case plan9.Tread:
-			tx = c.read(rx)
-		case plan9.Twrite:
-			tx = c.write(rx)
-		case plan9.Tremove:
-			tx = c.remove(rx)
-		case plan9.Tstat:
-			tx = c.stat(rx)
-		case plan9.Twstat:
-			tx = c.wstat(rx)
-		default:
-			tx = errFcall(errors.New("unknown message"))
-		}
-
-		tx.Tag = rx.Tag
-		err = plan9.WriteFcall(c.rw, tx)
-		if err != nil {
-			fmt.Fprintln(c.logger, err)
-			return
-		}
+		wg.Add(1)
+		go func(tx *Fcall) {
+			defer wg.Done()
+			w <- c.s.transmit(tx)
+		}(tx)
 	}
-	c.s.End()
+
+	go func() {
+		wg.Wait()
+		close(w)
+	}()
+	c.rwc.Close()
+	return nil
 }
 
-func errFcall(e error) *Fcall {
-	return &Fcall{Type: plan9.Rerror, Ename: e.Error()}
+// do not copy
+type serveSrv struct {
+	s    Srv
+	fids sync.Map
 }
 
-func (c *conn) version(rx *Fcall) *Fcall {
-	return &Fcall{Type: plan9.Rversion, Version: Version, Msize: rx.Msize}
-}
+func (s *serveSrv) transmit(tx *Fcall) *Fcall {
+	rx := new(Fcall)
+	rx.Type = tx.Type + 1
+	rx.Tag = tx.Tag
 
-func (c *conn) auth(rx *Fcall) *Fcall {
-	if _, ok := c.fids[rx.Afid]; ok {
-		return errFcall(errDupFid)
+	switch tx.Type {
+	case plan9.Tversion:
+		s.version(rx, tx)
+	case plan9.Tauth:
+		s.auth(rx, tx)
+	case plan9.Tflush:
+		// do nothing
+	case plan9.Tattach:
+		s.attach(rx, tx)
+	case plan9.Twalk:
+		s.walk(rx, tx)
+	case plan9.Tclunk:
+		s.clunk(rx, tx)
+	case plan9.Topen:
+		s.open(rx, tx)
+	case plan9.Tcreate:
+		s.create(rx, tx)
+	case plan9.Tread:
+		s.read(rx, tx)
+	case plan9.Twrite:
+		s.write(rx, tx)
+	case plan9.Tremove:
+		s.remove(rx, tx)
+	case plan9.Tstat:
+		s.stat(rx, tx)
+	case plan9.Twstat:
+		s.wstat(rx, tx)
+	default:
+		setError(rx, errors.New("unknown message"))
 	}
-	afid, qid, err := c.s.Auth(rx.Uname, rx.Aname)
+	return rx
+}
+
+func setError(f *Fcall, e error) {
+	f.Type = plan9.Rerror
+	f.Ename = e.Error()
+}
+
+func (s *serveSrv) version(rx, tx *Fcall) {
+	rx.Type = plan9.Rversion
+	rx.Version = Version
+	rx.Msize = tx.Msize
+}
+
+func (s *serveSrv) auth(rx, tx *Fcall) {
+	if _, ok := s.fids.Load(tx.Afid); ok {
+		setError(rx, errDupFid)
+		return
+	}
+	afid, qid, err := s.s.Auth(tx.Uname, tx.Aname)
 	if err != nil {
-		return errFcall(err)
+		setError(rx, err)
+		return
 	}
-	c.afid = afid
-	c.fids[rx.Afid] = afid
-	return &Fcall{Type: plan9.Rauth, Aqid: qid}
+
+	s.fids.Store(tx.Afid, afid)
+
+	rx.Aqid = qid
 }
 
-func (c *conn) attach(rx *Fcall) *Fcall {
+func (s *serveSrv) attach(rx, tx *Fcall) {
 	var afid Fid
-	if rx.Afid != plan9.NOFID {
-		var ok bool
-		afid, ok = c.fids[rx.Afid]
+	if tx.Afid != plan9.NOFID {
+		a, ok := s.fids.Load(tx.Afid)
 		if !ok {
-			return errFcall(errUnknownFid)
+			setError(rx, errUnknownFid)
+			return
 		}
+		afid = a.(Fid)
 	}
-	if _, ok := c.fids[rx.Fid]; ok {
-		return errFcall(errDupFid)
+	if _, ok := s.fids.Load(tx.Fid); ok {
+		setError(rx, errDupFid)
+		return
 	}
-	newfid, qid, err := c.s.Attach(afid, rx.Uname, rx.Aname)
+	newfid, qid, err := s.s.Attach(afid, tx.Uname, tx.Aname)
 	if err != nil {
-		return errFcall(err)
+		setError(rx, err)
+		return
 	}
-	c.fids[rx.Fid] = newfid
-	return &Fcall{Type: plan9.Rattach, Qid: qid}
+	s.fids.Store(tx.Fid, newfid)
+	rx.Qid = qid
 }
 
-func (c *conn) walk(rx *Fcall) *Fcall {
-	f, ok := c.fids[rx.Fid]
-	if !ok {
-		return errFcall(errUnknownFid)
+func (s *serveSrv) walk(rx, tx *Fcall) {
+	f, ok := s.fids.Load(tx.Fid)
+	if !ok || f == nil {
+		setError(rx, errUnknownFid)
+		return
 	}
-	if _, ok = c.fids[rx.Newfid]; ok && rx.Fid != rx.Newfid {
-		return errFcall(errDupFid)
+	_, ok = s.fids.LoadOrStore(tx.Newfid, nil)
+	if ok && tx.Fid != tx.Newfid {
+		setError(rx, errDupFid)
+		return
 	}
-	newfid, qids, err := f.Walk(rx.Wname)
+	newfid, qids, err := f.(Fid).Walk(tx.Wname)
 	if err != nil {
-		return errFcall(err)
+		setError(rx, err)
+		return
 	}
-	if len(rx.Wname) == len(qids) {
-		c.fids[rx.Newfid] = newfid
+	if len(tx.Wname) == len(qids) {
+		s.fids.Store(tx.Newfid, newfid)
+	} else {
+		s.fids.Delete(tx.Newfid)
 	}
-	return &Fcall{Type: plan9.Rwalk, Wqid: qids}
+	rx.Wqid = qids
 }
 
-func (c *conn) open(rx *Fcall) *Fcall {
-	f, ok := c.fids[rx.Fid]
-	if !ok {
-		return errFcall(errUnknownFid)
+func (s *serveSrv) open(rx, tx *Fcall) {
+	f, ok := s.fids.Load(tx.Fid)
+	if !ok || f == nil {
+		setError(rx, errUnknownFid)
+		return
 	}
-	qid, iounit, err := f.Open(rx.Mode)
+	qid, iounit, err := f.(Fid).Open(tx.Mode)
 	if err != nil {
-		return errFcall(err)
+		setError(rx, err)
+		return
 	}
-	return &Fcall{Type: plan9.Ropen, Iounit: iounit, Qid: qid}
+	rx.Iounit = iounit
+	rx.Qid = qid
 }
 
-func (c *conn) create(rx *Fcall) *Fcall {
-	f, ok := c.fids[rx.Fid]
-	if !ok {
-		return errFcall(errUnknownFid)
+func (s *serveSrv) create(rx, tx *Fcall) {
+	f, ok := s.fids.Load(tx.Fid)
+	if !ok || f == nil {
+		setError(rx, errUnknownFid)
+		return
 	}
-	qid, iounit, err := f.Create(rx.Name, rx.Mode, rx.Perm)
+	qid, iounit, err := f.(Fid).Create(tx.Name, tx.Mode, tx.Perm)
 	if err != nil {
-		return errFcall(err)
+		setError(rx, err)
+		return
 	}
-	return &Fcall{Type: plan9.Rcreate, Iounit: iounit, Qid: qid}
+	rx.Iounit = iounit
+	rx.Qid = qid
 }
 
-func (c *conn) read(rx *Fcall) *Fcall {
-	f, ok := c.fids[rx.Fid]
-	if !ok {
-		return errFcall(errUnknownFid)
+func (s *serveSrv) read(rx, tx *Fcall) {
+	f, ok := s.fids.Load(tx.Fid)
+	if !ok || f == nil {
+		setError(rx, errUnknownFid)
+		return
 	}
-	b := make([]byte, int(rx.Count))
-	n, err := f.ReadAt(b, int64(rx.Offset))
+	b := make([]byte, int(tx.Count))
+	n, err := f.(Fid).ReadAt(b, int64(tx.Offset))
+
+	// io.ReaderAt returns non-nil error whenever n != len(b).
+	// This implement does not treat it error unless n == 0.
 	if n == 0 && err != nil && err != io.EOF {
-		return errFcall(err)
+		setError(rx, err)
+		return
 	}
-	return &Fcall{Type: plan9.Rread, Data: b[:n]}
+
+	rx.Data = b[:n]
 }
 
-func (c *conn) write(rx *Fcall) *Fcall {
-	f, ok := c.fids[rx.Fid]
-	if !ok {
-		return errFcall(errUnknownFid)
+func (s *serveSrv) write(rx, tx *Fcall) {
+	f, ok := s.fids.Load(tx.Fid)
+	if !ok || f == nil {
+		setError(rx, errUnknownFid)
+		return
 	}
-	n, err := f.WriteAt(rx.Data, int64(rx.Offset))
+	n, err := f.(Fid).WriteAt(tx.Data, int64(tx.Offset))
 	if err != nil {
-		return errFcall(err)
+		setError(rx, err)
+		return
 	}
-	return &Fcall{Type: plan9.Rwrite, Count: uint32(n)}
+	rx.Count = uint32(n)
 }
 
-func (c *conn) clunk(rx *Fcall) *Fcall {
-	f, ok := c.fids[rx.Fid]
-	if !ok {
-		return errFcall(errUnknownFid)
+func (s *serveSrv) clunk(rx, tx *Fcall) {
+	f, ok := s.fids.Load(tx.Fid)
+	if !ok || f == nil {
+		setError(rx, errUnknownFid)
+		return
 	}
-	delete(c.fids, rx.Fid)
-	err := f.Clunk()
+	s.fids.Delete(tx.Fid)
+	err := f.(Fid).Clunk()
 	if err != nil {
-		return errFcall(err)
+		setError(rx, err)
+		return
 	}
-	return &Fcall{Type: plan9.Rclunk}
 }
 
-func (c *conn) remove(rx *Fcall) *Fcall {
-	f, ok := c.fids[rx.Fid]
-	if !ok {
-		return errFcall(errUnknownFid)
+func (s *serveSrv) remove(rx, tx *Fcall) {
+	f, ok := s.fids.Load(tx.Fid)
+	if !ok || f == nil {
+		setError(rx, errUnknownFid)
+		return
 	}
-	delete(c.fids, rx.Fid)
-	err := f.Remove()
+	s.fids.Delete(tx.Fid)
+	err := f.(Fid).Remove()
 	if err != nil {
-		return errFcall(err)
+		setError(rx, err)
+		return
 	}
-	return &Fcall{Type: plan9.Rremove}
 }
 
-func (c *conn) stat(rx *Fcall) *Fcall {
-	f, ok := c.fids[rx.Fid]
-	if !ok {
-		return errFcall(errUnknownFid)
+func (s *serveSrv) stat(rx, tx *Fcall) {
+	f, ok := s.fids.Load(tx.Fid)
+	if !ok || f == nil {
+		setError(rx, errUnknownFid)
+		return
 	}
-	dir, err := f.Stat()
+	dir, err := f.(Fid).Stat()
 	if err != nil {
-		return errFcall(err)
+		setError(rx, err)
+		return
 	}
-	b, _ := dir.Bytes()
-	return &Fcall{Type: plan9.Rstat, Stat: b}
+	rx.Stat, _ = dir.Bytes()
 }
 
-func (c *conn) wstat(rx *Fcall) *Fcall {
-	f, ok := c.fids[rx.Fid]
-	if !ok {
-		return errFcall(errUnknownFid)
+func (s *serveSrv) wstat(rx, tx *Fcall) {
+	f, ok := s.fids.Load(tx.Fid)
+	if !ok || f == nil {
+		setError(rx, errUnknownFid)
+		return
 	}
-	dir, err := plan9.UnmarshalDir(rx.Stat)
+	dir, err := plan9.UnmarshalDir(tx.Stat)
 	if err != nil {
-		return errFcall(err)
+		setError(rx, err)
+		return
 	}
-	err = f.WStat(dir)
+	err = f.(Fid).WStat(dir)
 	if err != nil {
-		return errFcall(err)
+		setError(rx, err)
+		return
 	}
-	return &Fcall{Type: plan9.Rwstat}
 }
