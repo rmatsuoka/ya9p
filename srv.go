@@ -92,13 +92,16 @@ func (c *conn) serve() error {
 		wg.Wait()
 		close(w)
 	}()
+	c.s.clunkAll()
 	c.rwc.Close()
 	return nil
 }
 
 // do not copy
 type serveSrv struct {
-	s    Srv
+	s Srv
+
+	// If nil is stored, that means its fid is reserved.
 	fids sync.Map
 }
 
@@ -138,6 +141,18 @@ func (s *serveSrv) transmit(tx *Fcall) *Fcall {
 		setError(rx, errors.New("unknown message"))
 	}
 	return rx
+}
+
+func (s *serveSrv) clunkAll() {
+	s.fids.Range(func(key, value interface{}) bool {
+		if value == nil {
+			return true
+		}
+		value.(Fid).Clunk()
+		return true
+	})
+
+	s.fids = sync.Map{}
 }
 
 func setError(f *Fcall, e error) {
@@ -198,11 +213,13 @@ func (s *serveSrv) walk(rx, tx *Fcall) {
 	}
 	_, ok = s.fids.LoadOrStore(tx.Newfid, nil)
 	if ok && tx.Fid != tx.Newfid {
+		s.fids.Delete(tx.Newfid)
 		setError(rx, errDupFid)
 		return
 	}
 	newfid, qids, err := f.(Fid).Walk(tx.Wname)
 	if err != nil {
+		s.fids.Delete(tx.Newfid)
 		setError(rx, err)
 		return
 	}

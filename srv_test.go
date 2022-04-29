@@ -24,4 +24,5 @@ func TestServeSrv(t *testing.T) {
 			t.Fatal(rx.Ename)
 		}
 	}
+	s.clunkAll()
 }
