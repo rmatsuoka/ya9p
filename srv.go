@@ -167,16 +167,17 @@ func (s *serveSrv) version(rx, tx *Fcall) {
 }
 
 func (s *serveSrv) auth(rx, tx *Fcall) {
-	if _, ok := s.fids.Load(tx.Afid); ok {
+	if _, ok := s.fids.LoadOrStore(tx.Afid, nil); ok {
+		s.fids.Delete(tx.Afid)
 		setError(rx, errDupFid)
 		return
 	}
 	afid, qid, err := s.s.Auth(tx.Uname, tx.Aname)
 	if err != nil {
+		s.fids.Delete(tx.Afid)
 		setError(rx, err)
 		return
 	}
-
 	s.fids.Store(tx.Afid, afid)
 
 	rx.Aqid = qid
@@ -192,16 +193,20 @@ func (s *serveSrv) attach(rx, tx *Fcall) {
 		}
 		afid = a.(Fid)
 	}
-	if _, ok := s.fids.Load(tx.Fid); ok {
+	if _, ok := s.fids.LoadOrStore(tx.Fid, nil); ok {
+		s.fids.Delete(tx.Fid)
 		setError(rx, errDupFid)
 		return
 	}
+
 	newfid, qid, err := s.s.Attach(afid, tx.Uname, tx.Aname)
 	if err != nil {
+		s.fids.Delete(tx.Fid)
 		setError(rx, err)
 		return
 	}
 	s.fids.Store(tx.Fid, newfid)
+
 	rx.Qid = qid
 }
 
@@ -232,8 +237,8 @@ func (s *serveSrv) walk(rx, tx *Fcall) {
 }
 
 func (s *serveSrv) open(rx, tx *Fcall) {
-	f, ok := s.fids.Load(tx.Fid)
-	if !ok || f == nil {
+	f, _ := s.fids.Load(tx.Fid)
+	if f == nil {
 		setError(rx, errUnknownFid)
 		return
 	}
@@ -247,8 +252,8 @@ func (s *serveSrv) open(rx, tx *Fcall) {
 }
 
 func (s *serveSrv) create(rx, tx *Fcall) {
-	f, ok := s.fids.Load(tx.Fid)
-	if !ok || f == nil {
+	f, _ := s.fids.Load(tx.Fid)
+	if f == nil {
 		setError(rx, errUnknownFid)
 		return
 	}
@@ -262,8 +267,8 @@ func (s *serveSrv) create(rx, tx *Fcall) {
 }
 
 func (s *serveSrv) read(rx, tx *Fcall) {
-	f, ok := s.fids.Load(tx.Fid)
-	if !ok || f == nil {
+	f, _ := s.fids.Load(tx.Fid)
+	if f == nil {
 		setError(rx, errUnknownFid)
 		return
 	}
@@ -281,8 +286,8 @@ func (s *serveSrv) read(rx, tx *Fcall) {
 }
 
 func (s *serveSrv) write(rx, tx *Fcall) {
-	f, ok := s.fids.Load(tx.Fid)
-	if !ok || f == nil {
+	f, _ := s.fids.Load(tx.Fid)
+	if f == nil {
 		setError(rx, errUnknownFid)
 		return
 	}
@@ -295,36 +300,34 @@ func (s *serveSrv) write(rx, tx *Fcall) {
 }
 
 func (s *serveSrv) clunk(rx, tx *Fcall) {
-	f, ok := s.fids.Load(tx.Fid)
-	if !ok || f == nil {
+	f, _ := s.fids.LoadAndDelete(tx.Fid)
+	if f == nil {
 		setError(rx, errUnknownFid)
 		return
 	}
-	s.fids.Delete(tx.Fid)
+
 	err := f.(Fid).Clunk()
 	if err != nil {
 		setError(rx, err)
-		return
 	}
 }
 
 func (s *serveSrv) remove(rx, tx *Fcall) {
-	f, ok := s.fids.Load(tx.Fid)
-	if !ok || f == nil {
+	f, _ := s.fids.LoadAndDelete(tx.Fid)
+	if f == nil {
 		setError(rx, errUnknownFid)
 		return
 	}
-	s.fids.Delete(tx.Fid)
+
 	err := f.(Fid).Remove()
 	if err != nil {
 		setError(rx, err)
-		return
 	}
 }
 
 func (s *serveSrv) stat(rx, tx *Fcall) {
-	f, ok := s.fids.Load(tx.Fid)
-	if !ok || f == nil {
+	f, _ := s.fids.Load(tx.Fid)
+	if f == nil {
 		setError(rx, errUnknownFid)
 		return
 	}
@@ -337,8 +340,8 @@ func (s *serveSrv) stat(rx, tx *Fcall) {
 }
 
 func (s *serveSrv) wstat(rx, tx *Fcall) {
-	f, ok := s.fids.Load(tx.Fid)
-	if !ok || f == nil {
+	f, _ := s.fids.Load(tx.Fid)
+	if f == nil {
 		setError(rx, errUnknownFid)
 		return
 	}
@@ -350,6 +353,5 @@ func (s *serveSrv) wstat(rx, tx *Fcall) {
 	err = f.(Fid).WStat(dir)
 	if err != nil {
 		setError(rx, err)
-		return
 	}
 }
