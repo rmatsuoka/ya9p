@@ -186,12 +186,12 @@ func (s *serveSrv) auth(rx, tx *Fcall) {
 func (s *serveSrv) attach(rx, tx *Fcall) {
 	var afid Fid
 	if tx.Afid != plan9.NOFID {
-		a, ok := s.fids.Load(tx.Afid)
-		if !ok {
+		f, _ := s.fids.Load(tx.Afid)
+		if f == nil {
 			setError(rx, errUnknownFid)
 			return
 		}
-		afid = a.(Fid)
+		afid = f.(Fid)
 	}
 	if _, ok := s.fids.LoadOrStore(tx.Fid, nil); ok {
 		s.fids.Delete(tx.Fid)
